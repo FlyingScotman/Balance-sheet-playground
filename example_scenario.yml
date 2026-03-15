@@ -1,0 +1,60 @@
+market_data:
+  reporting_currency: RUB
+  fx_rates:
+    USD/RUB: 80
+  indices:
+    LIBOR: 0.035
+    RUONIA: 0.14
+  quotes:
+    BOND1: 101
+    RUB_BOND1: 1.02
+
+render_profile:
+  compact: false
+  show_market_data: true
+  show_funding: true
+  show_ocp: true
+  show_pv: true
+  show_formulas: true
+
+accounts:
+  - name: BOND1
+    book: BND
+    side: asset
+    currency: USD
+    carrying_price: 100
+    market_key: BOND1
+    funding_rate: 7%
+    description: USD bond
+  - name: RUB_BOND1
+    book: BND
+    side: asset
+    currency: RUB
+    carrying_price: 1
+    market_key: RUB_BOND1
+    funding_rate: RUONIA + 3%
+  - name: USD_LOAN
+    book: BND
+    side: liability
+    currency: USD
+    carrying_price: 1
+    funding_rate: LIBOR + 1%
+  - name: RUB_LOAN
+    book: BND
+    side: liability
+    currency: RUB
+    carrying_price: 1
+    funding_rate: RUONIA + 1%
+
+transactions:
+  - timestamp: 2026-03-15T10:00:00
+    description: Initial setup
+    postings:
+      - account: BOND1
+        quantity: 100
+      - account: RUB_BOND1
+        quantity: 1000000
+      - account: USD_LOAN
+        quantity: 10000
+      - account: RUB_LOAN
+        quantity: 500000
