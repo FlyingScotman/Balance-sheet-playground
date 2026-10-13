@@ -336,8 +336,8 @@
       dv01: dvF + dvR, cs01: 0, risk, fxDelta, jtd: 0, counterparty: opts.cpty || 'Банк-контрагент Б', newToday: !!opts.newToday,
     });
   }
-  xccy('RATES', 'CNY', 2, 'PAY', 600 * mm, 13.10, { agedY: 0.5 });
-  xccy('RATES', 'CNY', 3, 'PAY', 450 * mm, 12.85);
+  xccy('RATES', 'CNY', 2, 'PAY', 250 * mm, 13.10, { agedY: 0.5 });
+  xccy('RATES', 'CNY', 3, 'RECFX', 150 * mm, 12.85);
   xccy('RATES', 'USD', 3, 'PAY', 25 * mm, 12.40, { agedY: 0.8, initFx: 92.1 });
   xccy('RATES', 'USD', 5, 'RECFX', 8 * mm, 12.30, { agedY: 0.2, cpty: 'Банк-контрагент В' });
 
@@ -391,7 +391,7 @@
     });
   }
   fx('FXB', 'USDRUB', 'TOM', 9.5 * mm, 81.10, '2026-10-14');
-  fx('FXB', 'CNYRUB', 'TOM', -40 * mm, 11.36, '2026-10-14');
+  fx('FXB', 'CNYRUB', 'TOM', -70 * mm, 11.36, '2026-10-14');
   fx('FXB', 'EURRUB', 'FWD 3M', -4 * mm, 95.80, '2027-01-13', { cpty: 'Банк-контрагент Б' });
   fx('FXB', 'CNYRUB', 'FWD 6M', 260 * mm, 11.70, '2027-04-13', { cpty: 'Банк-контрагент А' });
   fx('FXB', 'USDRUB', 'FWD 1M', -6 * mm, 81.90, '2026-11-13', { newToday: true });
@@ -414,7 +414,8 @@
   fund('CORP_FX', 'РЕПО с ЦК', 'CNY', -720 * mm, 'RUSFAR CNY O/N', 5.42, '2026-10-13', '2026-10-14', 'НКЦ', 'облигации в CNY');
   fund('CORP_FX', 'TSY FTP', 'CNY', -350 * mm, 'RUSFAR CNY + 0.60%', 6.05, '2026-08-01', '2027-02-01', 'Казначейство', null);
   fund('CORP_FX', 'TSY FTP', 'EUR', -8 * mm, '€STR + 2.00%', 4.15, '2026-03-01', '2027-09-01', 'Казначейство', null);
-  fund('SOV_FX', 'TSY FTP', 'RUB', -6.8 * bn, 'RUONIA + 0.25%', 14.57, '2026-09-01', '2027-03-01', 'Казначейство', null);
+  fund('SOV_FX', 'РЕПО с ЦК', 'CNY', -600 * mm, 'RUSFAR CNY 1W', 5.48, '2026-10-08', '2026-10-15', 'НКЦ', 'ОФЗ-CNY');
+  fund('SOV_FX', 'TSY FTP', 'CNY', -170 * mm, 'RUSFAR CNY + 0.55%', 6.00, '2026-09-01', '2027-03-01', 'Казначейство', null);
   fund('SOV_FX', 'TSY FTP', 'USD', -50 * mm, 'SOFR + 1.60%', 5.68, '2026-06-01', '2027-06-01', 'Казначейство', null);
   fund('SOV_FX', 'TSY FTP', 'EUR', -6 * mm, '€STR + 1.90%', 4.05, '2026-03-01', '2027-03-01', 'Казначейство', null);
   fund('SECUR', 'TSY FTP', 'RUB', -5.5 * bn, 'КС + 0.40%', 14.90, '2026-01-20', '2027-07-20', 'Казначейство', null);
@@ -464,16 +465,48 @@
     if (p.name === 'ОФЗ 26247') { unexplained = 0.85e6; breakNote = 'Сделка дня: цена сделки vs закрытие — разные время среза'; }
     p.pnl = Object.assign({}, e, { explained, unexplained, official: explained + unexplained, breakNote });
   });
-  // FX-переоценка фондирования в валюте и стоимость фондирования
+  // Валютное фондирование: FX-переоценка привлечения в валюте относится к тем позициям книги,
+  // которые оно фондирует (pro-rata по валютной дельте позиций противоположного знака).
+  // Так книга видит FX-риск нетто: облигация в CNY на CNY-РЕПО почти не даёт FX-PnL.
+  // Остаток (если в книге нечего фондировать в этой валюте) остаётся строкой фондирования книги.
+  function allocateFundingFx(shockFn, list) {
+    list = list || positions;
+    const toPos = {}, residualByBook = {}, byBook = {};
+    funding.forEach(f => {
+      if (f.ccy === 'RUB') return;
+      const x = shockFn(f.ccy, f.amount);
+      if (!x) return;
+      byBook[f.book] = (byBook[f.book] || 0) + x;
+      const sgn = -Math.sign(f.amount); // привлечение (−) фондирует длинные (+) позиции
+      const cands = list.filter(p => p.book === f.book && Math.sign(p.fxDelta[f.ccy] || 0) === sgn);
+      const w = cands.reduce((a, p) => a + Math.abs(p.fxDelta[f.ccy]), 0);
+      if (!w) { residualByBook[f.book] = (residualByBook[f.book] || 0) + x; return; }
+      cands.forEach(p => { toPos[p.id] = (toPos[p.id] || 0) + x * Math.abs(p.fxDelta[f.ccy]) / w; });
+    });
+    return { toPos, residualByBook, byBook };
+  }
+  const dayFxShock = (ccy, amt) => amt * FX[ccy] * FX_MOVE_PCT[ccy] / 100 / (1 + FX_MOVE_PCT[ccy] / 100);
+  const dayAlloc = allocateFundingFx(dayFxShock);
+  positions.forEach(p => {
+    const ff = dayAlloc.toPos[p.id] || 0;
+    p.pnl.fxGross = p.pnl.fx; p.pnl.fxFunding = ff; p.pnl.fx += ff;
+    p.pnl.explained += ff; p.pnl.official += ff;
+  });
+
+  // стоимость фондирования (кэрри) — отдельной строкой по книге; FX — только нераспределённый остаток
   const fundingPnl = { carry: 0, fx: 0 };
   const fundingPnlByBook = {};
-  Object.keys(BOOKS).forEach(b => { fundingPnlByBook[b] = { carry: 0, fx: 0 }; });
+  Object.keys(BOOKS).forEach(b => { fundingPnlByBook[b] = { carry: 0, fx: dayAlloc.residualByBook[b] || 0, fxAllocated: 0 }; });
   funding.forEach(f => {
     const c = f.amountRub * f.rate / 100 / 365;
-    const x = f.ccy !== 'RUB' ? f.amount * FX[f.ccy] * FX_MOVE_PCT[f.ccy] / 100 / (1 + FX_MOVE_PCT[f.ccy] / 100) : 0;
-    f.pnl = { carry: c, fx: x };
-    fundingPnl.carry += c; fundingPnl.fx += x;
-    fundingPnlByBook[f.book].carry += c; fundingPnlByBook[f.book].fx += x;
+    const x = f.ccy !== 'RUB' ? dayFxShock(f.ccy, f.amount) : 0;
+    f.pnl = { carry: c, fxGross: x };
+    fundingPnl.carry += c;
+    fundingPnlByBook[f.book].carry += c;
+  });
+  Object.keys(BOOKS).forEach(b => {
+    fundingPnlByBook[b].fxAllocated = (dayAlloc.byBook[b] || 0) - fundingPnlByBook[b].fx;
+    fundingPnl.fx += fundingPnlByBook[b].fx;
   });
 
   // ---------- лимиты ----------
@@ -555,6 +588,12 @@
       const v = sc.curves && sc.curves[c];
       curveShock[c] = v == null ? new Array(BUCKETS.length).fill(0) : (Array.isArray(v) ? v : new Array(BUCKETS.length).fill(v));
     });
+    const alloc = sc.fx
+      ? allocateFundingFx((ccy, amt) => amt * FX[ccy] * (sc.fx[ccy] || 0) / 100, positions)
+      : { toPos: {}, residualByBook: {}, byBook: {} };
+    // при фильтре по книгам учитываем фондирование только этих книг
+    const booksInList = new Set(list.map(p => p.book));
+    Object.keys(alloc.residualByBook).forEach(b => { if (!booksInList.has(b)) delete alloc.residualByBook[b]; });
     const res = list.map(p => {
       let rates = 0, spread = 0, fxr = 0, conv = 0;
       Object.keys(p.risk).forEach(c => p.risk[c].forEach((dv, i) => { rates += dv * curveShock[c][i]; }));
@@ -573,18 +612,22 @@
         }
         spread = p.cs01 * ds;
       }
-      if (sc.fx) Object.keys(p.fxDelta).forEach(c => { fxr += p.fxDelta[c] * FX[c] * (sc.fx[c] || 0) / 100; });
-      return { id: p.id, rates, spread, fx: fxr, convexity: conv, total: rates + spread + fxr + conv };
+      let fxGross = 0;
+      if (sc.fx) Object.keys(p.fxDelta).forEach(c => { fxGross += p.fxDelta[c] * FX[c] * (sc.fx[c] || 0) / 100; });
+      const fxFunding = alloc.toPos[p.id] || 0;
+      fxr = fxGross + fxFunding; // FX нетто валютного фондирования книги
+      return { id: p.id, rates, spread, fx: fxr, fxGross, fxFunding, convexity: conv, total: rates + spread + fxr + conv };
     });
-    let fundFx = 0;
-    if (sc.fx) funding.forEach(f => Object.keys(f.fxDelta).forEach(c => { fundFx += f.fxDelta[c] * FX[c] * (sc.fx[c] || 0) / 100; }));
-    return { byPosition: res, fundingFx: fundFx, total: sum(res, r => r.total) + fundFx };
+    // нераспределённый остаток FX по фондированию (по книгам и итого)
+    const fundingFxByBook = alloc.residualByBook;
+    const fundFx = sum(Object.values(fundingFxByBook));
+    return { byPosition: res, fundingFx: fundFx, fundingFxByBook, total: sum(res, r => r.total) + fundFx };
   }
 
   window.DESK = {
     asOf: AS_OF, reportingCcy: 'RUB',
     BUCKETS, PILLARS, CURVES, CURVE_MOVES, FX, FX_MOVE_PCT, INDICES, ISSUERS, RATING_ORDER, BOOKS, LIMITS, SCENARIOS,
     positions, funding, fundingPnl, fundingPnlByBook, history,
-    util: { sum, groupBy, bucketMatrix, netFx, runScenario, curveRate },
+    util: { sum, groupBy, bucketMatrix, netFx, runScenario, curveRate, allocateFundingFx },
   };
 })();
