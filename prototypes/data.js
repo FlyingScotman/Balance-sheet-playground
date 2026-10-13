@@ -478,9 +478,9 @@
 
   // ---------- лимиты ----------
   const LIMITS = {
-    dv01ByBook: { OFZ: 9e6, RATES: 6e6, CORP_RUB: 3.5e6, CORP_FX: 3e6, SOV_FX: 3.5e6, SECUR: 2e6, CREDIT: 0.5e6, FXB: 0.5e6 },
+    dv01ByBook: { OFZ: 9e6, RATES: 6e6, CORP_RUB: 3.5e6, CORP_FX: 4.5e6, SOV_FX: 6.5e6, SECUR: 2e6, CREDIT: 0.5e6, FXB: 0.5e6 },
     dv01Total: 14e6,
-    cs01Total: 12e6,
+    cs01Total: 25e6,
     ocp: { USD: 25e6, CNY: 1500e6, EUR: 10e6 },             // в валюте
     issuerGroup: 12e9,                                        // RUB, кроме суверена
     issuerGroupOverrides: { 'Российская Федерация': 120e9, 'Газпром': 15e9, 'Самолёт': 0.8e9, 'АФК Система': 2.5e9 },
