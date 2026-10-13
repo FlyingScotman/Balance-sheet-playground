@@ -471,7 +471,7 @@
   // Остаток (если в книге нечего фондировать в этой валюте) остаётся строкой фондирования книги.
   function allocateFundingFx(shockFn, list) {
     list = list || positions;
-    const toPos = {}, residualByBook = {}, byBook = {};
+    const toPos = {}, residualByBook = {}, byBook = {}, residualByDeal = {};
     funding.forEach(f => {
       if (f.ccy === 'RUB') return;
       const x = shockFn(f.ccy, f.amount);
@@ -480,10 +480,10 @@
       const sgn = -Math.sign(f.amount); // привлечение (−) фондирует длинные (+) позиции
       const cands = list.filter(p => p.book === f.book && Math.sign(p.fxDelta[f.ccy] || 0) === sgn);
       const w = cands.reduce((a, p) => a + Math.abs(p.fxDelta[f.ccy]), 0);
-      if (!w) { residualByBook[f.book] = (residualByBook[f.book] || 0) + x; return; }
+      if (!w) { residualByBook[f.book] = (residualByBook[f.book] || 0) + x; residualByDeal[f.id] = x; return; }
       cands.forEach(p => { toPos[p.id] = (toPos[p.id] || 0) + x * Math.abs(p.fxDelta[f.ccy]) / w; });
     });
-    return { toPos, residualByBook, byBook };
+    return { toPos, residualByBook, byBook, residualByDeal };
   }
   const dayFxShock = (ccy, amt) => amt * FX[ccy] * FX_MOVE_PCT[ccy] / 100 / (1 + FX_MOVE_PCT[ccy] / 100);
   const dayAlloc = allocateFundingFx(dayFxShock);
@@ -500,7 +500,9 @@
   funding.forEach(f => {
     const c = f.amountRub * f.rate / 100 / 365;
     const x = f.ccy !== 'RUB' ? dayFxShock(f.ccy, f.amount) : 0;
-    f.pnl = { carry: c, fxGross: x };
+    // fx — нераспределённый остаток (обычно 0), fxAllocated — ушло в позиции книги
+    const xr = dayAlloc.residualByDeal[f.id] || 0;
+    f.pnl = { carry: c, fx: xr, fxGross: x, fxAllocated: x - xr };
     fundingPnl.carry += c;
     fundingPnlByBook[f.book].carry += c;
   });
